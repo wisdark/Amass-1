@@ -5,27 +5,13 @@ package enum
 
 import (
 	"strings"
+	"time"
 
 	"github.com/OWASP/Amass/v3/eventbus"
 	"github.com/OWASP/Amass/v3/queue"
 	"github.com/OWASP/Amass/v3/requests"
 	"github.com/OWASP/Amass/v3/stringfilter"
 )
-
-var probeNames = []string{
-	"www",
-	"online",
-	"webserver",
-	"ns1",
-	"mail",
-	"smtp",
-	"webmail",
-	"prod",
-	"test",
-	"vpn",
-	"ftp",
-	"ssh",
-}
 
 // FQDNManager is the object type for taking in, generating and providing new DNS FQDNs.
 type FQDNManager interface {
@@ -54,6 +40,7 @@ type DomainManager struct {
 	curDomain string
 	srcIndex  int
 	filter    stringfilter.Filter
+	last      time.Time
 }
 
 // NewDomainManager returns an initialized DomainManager.
@@ -62,6 +49,7 @@ func NewDomainManager(e *Enumeration) *DomainManager {
 		enum:   e,
 		queue:  queue.NewQueue(),
 		filter: stringfilter.NewStringFilter(),
+		last:   time.Now(),
 	}
 }
 
@@ -90,7 +78,8 @@ func (r *DomainManager) NameQueueLen() int {
 
 // OutputRequests implements the FQDNManager interface.
 func (r *DomainManager) OutputRequests(num int) int {
-	if r.enum.dnsMgr != nil && r.enum.dnsMgr.RequestLen() != 0 {
+	// Check that we are not releasing the domain names too quickly
+	if r.enum.dnsMgr != nil && r.last.Add(5*time.Second).After(time.Now()) {
 		return 0
 	}
 
@@ -99,6 +88,7 @@ func (r *DomainManager) OutputRequests(num int) int {
 		return 0
 	}
 
+	r.last = time.Now()
 	// Release the current domain name to the next data source
 	r.enum.srcs[index].DNSRequest(r.enum.ctx, &requests.DNSRequest{
 		Name:   domain,
@@ -168,10 +158,8 @@ func (r *SubdomainManager) InputName(req *requests.DNSRequest) {
 	if req == nil || req.Name == "" || req.Domain == "" {
 		return
 	}
-
 	// Clean up the newly discovered name and domain
 	requests.SanitizeDNSRequest(req)
-
 	// Send every resolved name and associated DNS records to the data manager
 	r.enum.dataMgr.DNSRequest(r.enum.ctx, req)
 
@@ -307,8 +295,7 @@ func (r *SubdomainManager) checkSubdomain(req *requests.DNSRequest) {
 	times := r.timesForSubdomain(sub)
 
 	if sub != req.Domain {
-		r.enum.Bus.Publish(requests.SubDiscoveredTopic,
-			eventbus.PriorityHigh, r.enum.ctx, subreq, times)
+		r.enum.Bus.Publish(requests.SubDiscoveredTopic, eventbus.PriorityHigh, r.enum.ctx, subreq, times)
 	}
 
 	r.subqueue.Append(&subQueueElement{
@@ -377,6 +364,7 @@ func (r *NameManager) InputName(req *requests.DNSRequest) {
 	if req == nil || req.Name == "" || req.Domain == "" {
 		return
 	}
+
 	// Clean up the newly discovered name and domain
 	requests.SanitizeDNSRequest(req)
 	// Check that this name has not already been processed

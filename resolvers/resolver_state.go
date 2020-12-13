@@ -4,9 +4,12 @@
 package resolvers
 
 import (
+	"context"
 	"net"
 	"time"
 
+	amassnet "github.com/OWASP/Amass/v3/net"
+	"github.com/OWASP/Amass/v3/queue"
 	"github.com/miekg/dns"
 )
 
@@ -41,7 +44,7 @@ type allResolverStats struct {
 type resolverStateChans struct {
 	Done         chan struct{}
 	StopResolver chan struct{}
-	StoppedState chan *resolverStopped
+	StoppedState *queue.Queue
 	UpdateRTT    chan time.Duration
 	AddToStat    chan *updateResolverStat
 	GetStat      chan *getResolverStat
@@ -54,7 +57,7 @@ func initStateManagement() *resolverStateChans {
 	stateChs := &resolverStateChans{
 		Done:         make(chan struct{}, 2),
 		StopResolver: make(chan struct{}, 2),
-		StoppedState: make(chan *resolverStopped, 10),
+		StoppedState: queue.NewQueue(),
 		UpdateRTT:    make(chan time.Duration, 10),
 		AddToStat:    make(chan *updateResolverStat, 10),
 		GetStat:      make(chan *getResolverStat, 10),
@@ -78,8 +81,14 @@ func manageResolverState(chs *resolverStateChans) {
 			return
 		case <-chs.StopResolver:
 			stopped = true
-		case isst := <-chs.StoppedState:
-			isst.Stopped <- stopped
+		case <-chs.StoppedState.Signal:
+			chs.StoppedState.Process(func(e interface{}) {
+				state, ok := e.(*resolverStopped)
+				if !ok {
+					return
+				}
+				state.Stopped <- stopped
+			})
 		case rtt := <-chs.UpdateRTT:
 			numrtt++
 			avg := stats[QueryRTT]
@@ -109,7 +118,7 @@ func manageResolverState(chs *resolverStateChans) {
 func (r *BaseResolver) IsStopped() bool {
 	ch := make(chan bool, 2)
 
-	r.stateChannels.StoppedState <- &resolverStopped{Stopped: ch}
+	r.stateChannels.StoppedState.Append(&resolverStopped{Stopped: ch})
 	return <-ch
 }
 
@@ -121,8 +130,8 @@ func (r *BaseResolver) Stop() error {
 
 	r.stateChannels.StopResolver <- struct{}{}
 
-	close(r.Done)
-	close(r.stateChannels.Done)
+	//close(r.Done)
+	//close(r.stateChannels.Done)
 	close(r.xchgsChannels.Done)
 	return nil
 }
@@ -150,16 +159,6 @@ func (r *BaseResolver) updateStat(rcode int, value int64) {
 		Stat:   rcode,
 		Amount: value,
 	}
-}
-
-func (r *BaseResolver) getStat(stat int) int64 {
-	ch := make(chan int64, 2)
-
-	r.stateChannels.GetStat <- &getResolverStat{
-		Stat: stat,
-		Ch:   ch,
-	}
-	return <-ch
 }
 
 // Stats returns performance counters.
@@ -337,15 +336,6 @@ func (r *BaseResolver) pullRequestAfterTimeout(id uint16, timeout time.Duration)
 	return req
 }
 
-func (r *BaseResolver) updateRequestTimeout(id uint16, timeout time.Time) {
-	r.delTimeout(id)
-	r.xchgsChannels.UpdateTimeout <- &updateTimeoutMsg{
-		ID:      id,
-		Timeout: timeout,
-	}
-	r.addTimeout(id)
-}
-
 type rotationChans struct {
 	Rotate  chan struct{}
 	Current chan chan *dns.Conn
@@ -403,9 +393,7 @@ func (r *BaseResolver) periodicRotations(chs *rotationChans) {
 
 			var err error
 			for {
-				d := &net.Dialer{}
-
-				current, err = d.Dial("udp", r.address+":"+r.port)
+				current, err = amassnet.DialContext(context.TODO(), "udp", r.address+":"+r.port)
 				if err == nil {
 					break
 				}

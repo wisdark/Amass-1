@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/OWASP/Amass/v3/config"
+	"github.com/OWASP/Amass/v3/datasrcs"
 	"github.com/OWASP/Amass/v3/eventbus"
 	"github.com/OWASP/Amass/v3/graph"
 	"github.com/OWASP/Amass/v3/net"
@@ -49,8 +49,8 @@ func NewDataManagerService(sys systems.System, g *graph.Graph) *DataManagerServi
 
 // OnDNSRequest implements the Service interface.
 func (dms *DataManagerService) OnDNSRequest(ctx context.Context, req *requests.DNSRequest) {
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if bus == nil {
+	_, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -126,8 +126,8 @@ func (dms *DataManagerService) sendNewNames() {
 }
 
 func (dms *DataManagerService) processNewName(ctx context.Context, name, domain string) {
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if bus == nil {
+	_, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -140,9 +140,8 @@ func (dms *DataManagerService) processNewName(ctx context.Context, name, domain 
 }
 
 func (dms *DataManagerService) insertCNAME(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -172,9 +171,8 @@ func (dms *DataManagerService) insertCNAME(ctx context.Context, req *requests.DN
 }
 
 func (dms *DataManagerService) insertA(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -192,15 +190,14 @@ func (dms *DataManagerService) insertA(ctx context.Context, req *requests.DNSReq
 	bus.Publish(requests.NewAddrTopic, eventbus.PriorityHigh, &requests.AddrRequest{
 		Address: addr,
 		Domain:  req.Domain,
-		Tag:     req.Tag,
-		Source:  req.Source,
+		Tag:     requests.DNS,
+		Source:  "DNS",
 	})
 }
 
 func (dms *DataManagerService) insertAAAA(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -218,15 +215,14 @@ func (dms *DataManagerService) insertAAAA(ctx context.Context, req *requests.DNS
 	bus.Publish(requests.NewAddrTopic, eventbus.PriorityHigh, &requests.AddrRequest{
 		Address: addr,
 		Domain:  req.Domain,
-		Tag:     req.Tag,
-		Source:  req.Source,
+		Tag:     requests.DNS,
+		Source:  "DNS",
 	})
 }
 
 func (dms *DataManagerService) insertPTR(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -247,13 +243,13 @@ func (dms *DataManagerService) insertPTR(ctx context.Context, req *requests.DNSR
 		bus.Publish(requests.LogTopic, eventbus.PriorityHigh, fmt.Sprintf("%s failed to insert PTR record: %v", dms.graph, err))
 	}
 
+	// Important - Allows the target DNS name to be resolved in the foward direction
 	dms.genNewNameEvent(ctx, target, domain)
 }
 
 func (dms *DataManagerService) insertSRV(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -275,9 +271,8 @@ func (dms *DataManagerService) insertSRV(ctx context.Context, req *requests.DNSR
 }
 
 func (dms *DataManagerService) insertNS(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -309,9 +304,8 @@ func (dms *DataManagerService) insertNS(ctx context.Context, req *requests.DNSRe
 }
 
 func (dms *DataManagerService) insertMX(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -342,8 +336,8 @@ func (dms *DataManagerService) insertMX(ctx context.Context, req *requests.DNSRe
 }
 
 func (dms *DataManagerService) insertTXT(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	if cfg == nil {
+	cfg, _, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -355,8 +349,8 @@ func (dms *DataManagerService) insertTXT(ctx context.Context, req *requests.DNSR
 }
 
 func (dms *DataManagerService) insertSOA(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	if cfg == nil {
+	cfg, _, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -368,8 +362,8 @@ func (dms *DataManagerService) insertSOA(ctx context.Context, req *requests.DNSR
 }
 
 func (dms *DataManagerService) insertSPF(ctx context.Context, req *requests.DNSRequest, recidx int) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	if cfg == nil {
+	cfg, _, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 
@@ -381,9 +375,8 @@ func (dms *DataManagerService) insertSPF(ctx context.Context, req *requests.DNSR
 }
 
 func (dms *DataManagerService) findNamesAndAddresses(ctx context.Context, data, domain string) {
-	cfg := ctx.Value(requests.ContextConfig).(*config.Config)
-	bus := ctx.Value(requests.ContextEventBus).(*eventbus.EventBus)
-	if cfg == nil || bus == nil {
+	cfg, bus, err := datasrcs.ContextConfigBus(ctx)
+	if err != nil {
 		return
 	}
 

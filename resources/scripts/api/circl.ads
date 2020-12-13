@@ -11,31 +11,36 @@ function start()
 end
 
 function check()
-    if (api ~= nil and api.username ~= nil and 
-        api.password ~= nil and api.username ~= "" and api.password ~= "") then
+    local c
+    local cfg = datasrc_config()
+    if cfg ~= nil then
+        c = cfg.credentials
+    end
+
+    if (c ~= nil and c.username ~= nil and 
+        c.password ~= nil and c.username ~= "" and c.password ~= "") then
         return true
     end
     return false
 end
 
 function vertical(ctx, domain)
-    apirequest(ctx, domain)
-end
+    local c
+    local cfg = datasrc_config()
+    if cfg ~= nil then
+        c = cfg.credentials
+    end
 
-function resolved(ctx, name, domain, records)
-    apirequest(ctx, name)
-end
-
-function apirequest(ctx, domain)
-    if (api == nil or api.username == "" or api.password == "") then
+    if (c == nil or c.username == nil or 
+        c.username == "" or c.password == nil or c.password == "") then
         return
     end
 
     local page, err = request({
         url=buildurl(domain),
         headers={['Content-Type']="application/json"},
-        id=api['username'],
-        pass=api['password'],
+        id=c['username'],
+        pass=c['password'],
     })
     if (err ~= nil and err ~= "") then
         return

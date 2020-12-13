@@ -4,17 +4,17 @@
 package systems
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/OWASP/Amass/v3/config"
 	"github.com/OWASP/Amass/v3/graph"
-	"github.com/OWASP/Amass/v3/graphdb"
+	amassnet "github.com/OWASP/Amass/v3/net"
 	"github.com/OWASP/Amass/v3/requests"
 	"github.com/OWASP/Amass/v3/resolvers"
-	"golang.org/x/sync/semaphore"
+	"go.uber.org/ratelimit"
 )
 
 // LocalSystem implements a System to be executed within a single process.
@@ -22,9 +22,9 @@ type LocalSystem struct {
 	cfg    *config.Config
 	pool   resolvers.Resolver
 	graphs []*graph.Graph
-
+	cache  *amassnet.ASNCache
 	// Semaphore to enforce the maximum DNS queries
-	semMaxDNSQueries *semaphore.Weighted
+	rlimit ratelimit.Limiter
 
 	// Broadcast channel that indicates no further writes to the output channel
 	done              chan struct{}
@@ -40,20 +40,31 @@ func NewLocalSystem(c *config.Config) (*LocalSystem, error) {
 		return nil, err
 	}
 
-	pool := resolvers.SetupResolverPool(c.Resolvers, c.MaxDNSQueries, c.MonitorResolverRate, c.Log)
+	pool := resolvers.SetupResolverPool(c.Resolvers, c.MaxDNSQueries, c.Log)
 	if pool == nil {
 		return nil, errors.New("The system was unable to build the pool of resolvers")
 	}
 
 	sys := &LocalSystem{
-		cfg:              c,
-		pool:             pool,
-		done:             make(chan struct{}, 2),
-		addSource:        make(chan requests.Service, 10),
-		allSources:       make(chan chan []requests.Service, 10),
-		semMaxDNSQueries: semaphore.NewWeighted(int64(c.MaxDNSQueries)),
+		cfg:        c,
+		pool:       pool,
+		cache:      amassnet.NewASNCache(),
+		done:       make(chan struct{}, 2),
+		addSource:  make(chan requests.Service, 10),
+		allSources: make(chan chan []requests.Service, 10),
+		rlimit:     ratelimit.New(c.MaxDNSQueries),
 	}
 
+	// Load the ASN information into the cache
+	if err := sys.loadCacheData(); err != nil {
+		sys.Shutdown()
+		return nil, err
+	}
+	// Make sure that the output directory is setup for this local system
+	if err := sys.setupOutputDirectory(); err != nil {
+		sys.Shutdown()
+		return nil, err
+	}
 	// Setup the correct graph database handler
 	if err := sys.setupGraphDBs(); err != nil {
 		sys.Shutdown()
@@ -72,6 +83,11 @@ func (l *LocalSystem) Config() *config.Config {
 // Pool implements the System interface.
 func (l *LocalSystem) Pool() resolvers.Resolver {
 	return l.pool
+}
+
+// Cache implements the System interface.
+func (l *LocalSystem) Cache() *amassnet.ASNCache {
+	return l.cache
 }
 
 // AddSource implements the System interface.
@@ -127,7 +143,7 @@ func (l *LocalSystem) Shutdown() error {
 		g.Close()
 	}
 
-	go l.pool.Stop()
+	//go l.pool.Stop()
 	return nil
 }
 
@@ -141,35 +157,44 @@ func (l *LocalSystem) GetAllSourceNames() []string {
 	return names
 }
 
-// Select the graph that will store the System findings.
-func (l *LocalSystem) setupGraphDBs() error {
-	c := l.Config()
-
-	if c.GremlinURL != "" {
-		gremlin := graphdb.NewGremlin(c.GremlinURL, c.GremlinUser, c.GremlinPass)
-		if gremlin == nil {
-			return fmt.Errorf("System: Failed to create the %s graph", gremlin.String())
-		}
-
-		g := graph.NewGraph(gremlin)
-		if g == nil {
-			return fmt.Errorf("System: Failed to create the %s graph", g.String())
-		}
-
-		l.graphs = append(l.graphs, g)
+func (l *LocalSystem) setupOutputDirectory() error {
+	path := config.OutputDirectory(l.cfg.Dir)
+	if path == "" {
+		return nil
 	}
 
-	dir := config.OutputDirectory(c.Dir)
-	if c.LocalDatabase && dir != "" {
-		cayley := graphdb.NewCayleyGraph(dir, true)
+	var err error
+	// If the directory does not yet exist, create it
+	if err = os.MkdirAll(path, 0755); err != nil {
+		return nil
+	}
+
+	return nil
+}
+
+// Select the graph that will store the System findings.
+func (l *LocalSystem) setupGraphDBs() error {
+	cfg := l.Config()
+
+	var dbs []*config.Database
+	if db := cfg.LocalDatabaseSettings(cfg.GraphDBs); db != nil {
+		dbs = append(dbs, db)
+	}
+	dbs = append(dbs, cfg.GraphDBs...)
+
+	for _, db := range dbs {
+		cayley := graph.NewCayleyGraph(db.System, db.URL, db.Options)
 		if cayley == nil {
-			return fmt.Errorf("System: Failed to create the %s graph", cayley.String())
+			return fmt.Errorf("System: Failed to create the %s graph", db.System)
 		}
 
 		g := graph.NewGraph(cayley)
 		if g == nil {
 			return fmt.Errorf("System: Failed to create the %s graph", g.String())
 		}
+
+		// Load the ASN Cache with all prior knowledge of IP address ranges and ASNs
+		go g.ASNCacheFill(l.Cache())
 
 		l.graphs = append(l.graphs, g)
 	}
@@ -186,13 +211,9 @@ func (l *LocalSystem) GetMemoryUsage() uint64 {
 }
 
 // PerformDNSQuery blocks if the maximum number of queries is already taking place.
-func (l *LocalSystem) PerformDNSQuery(ctx context.Context) error {
-	return l.semMaxDNSQueries.Acquire(ctx, 1)
-}
-
-// FinishedDNSQuery allows a new DNS query to be started when at the maximum.
-func (l *LocalSystem) FinishedDNSQuery() {
-	l.semMaxDNSQueries.Release(1)
+func (l *LocalSystem) PerformDNSQuery() error {
+	l.rlimit.Take()
+	return nil
 }
 
 func (l *LocalSystem) manageDataSources() {
@@ -208,4 +229,23 @@ func (l *LocalSystem) manageDataSources() {
 			all <- dataSources
 		}
 	}
+}
+
+func (l *LocalSystem) loadCacheData() error {
+	ranges, err := config.GetIP2ASNData()
+	if err != nil {
+		return err
+	}
+
+	for _, r := range ranges {
+		l.cache.Update(&requests.ASNRequest{
+			Address:     r.FirstIP.String(),
+			ASN:         r.ASN,
+			CC:          r.CC,
+			Prefix:      amassnet.Range2CIDR(r.FirstIP, r.LastIP).String(),
+			Description: r.Description,
+		})
+	}
+
+	return nil
 }
