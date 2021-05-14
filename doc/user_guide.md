@@ -80,11 +80,9 @@ The intel subcommand can help you discover additional root domain names associat
 | -list | Print the names of all available data sources | amass intel -list |
 | -log | Path to the log file where errors will be written | amass intel -log amass.log -whois -d example.com |
 | -max-dns-queries | Maximum number of concurrent DNS queries | amass intel -max-dns-queries 200 -whois -d example.com |
-| -noresolvrate | Disable resolver rate monitoring | amass intel -cidr 104.154.0.0/15 -noresolvrate |
-| -noresolvscore | Disable resolver reliability scoring | amass intel -cidr 104.154.0.0/15 -noresolvscore |
 | -o | Path to the text output file | amass intel -o out.txt -whois -d example.com |
 | -org | Search string provided against AS description information | amass intel -org Facebook |
-| -p | Ports separated by commas (default: 443) | amass intel -cidr 104.154.0.0/15 -p 443,8080 |
+| -p | Ports separated by commas (default: 80, 443) | amass intel -cidr 104.154.0.0/15 -p 443,8080 |
 | -r | IP addresses of preferred DNS resolvers (can be used multiple times) | amass intel -r 8.8.8.8,1.1.1.1 -whois -d example.com |
 | -rf | Path to a file providing preferred DNS resolvers | amass intel -rf data/resolvers.txt -whois -d example.com |
 | -src | Print data sources for the discovered names | amass intel -src -whois -d example.com |
@@ -107,7 +105,6 @@ This subcommand will perform DNS enumeration and network mapping while populatin
 | -demo | Censor output to make it suitable for demonstrations | amass enum -demo -d example.com |
 | -df | Path to a file providing root domain names | amass enum -df domains.txt |
 | -dir | Path to the directory containing the graph database | amass enum -dir PATH -d example.com |
-| -do | Path to data operations output file | amass enum -do data.json -d example.com |
 | -ef | Path to a file providing data sources to exclude | amass enum -ef exclude.txt -d example.com |
 | -exclude | Data source names separated by commas to be excluded | amass enum -exclude crtsh -d example.com |
 | -if | Path to a file providing data sources to include | amass enum -if include.txt -d example.com |
@@ -124,8 +121,6 @@ This subcommand will perform DNS enumeration and network mapping while populatin
 | -noalts | Disable generation of altered names | amass enum -noalts -d example.com |
 | -nolocaldb | Disable saving data into a local database | amass enum -nolocaldb -d example.com |
 | -norecursive | Turn off recursive brute forcing | amass enum -brute -norecursive -d example.com |
-| -noresolvrate | Disable resolver rate monitoring | amass enum -d example.com -noresolvrate |
-| -noresolvscore | Disable resolver reliability scoring | amass enum -d example.com -noresolvscore |
 | -o | Path to the text output file | amass enum -o out.txt -d example.com |
 | -oA | Path prefix used for naming all output files | amass enum -oA amass_scan -d example.com |
 | -passive | A purely passive mode of execution | amass enum --passive -d example.com |
@@ -251,8 +246,6 @@ Note that these locations are based on the [output directory](#the-output-direct
 | Option | Description |
 |--------|-------------|
 | resolver | The IP address of a DNS resolver and used globally by the amass package |
-| score_resolvers | Toggle resolver reliability scoring |
-| monitor_resolver_rate | Toggle resolver rate monitoring |
 
 ### The blacklisted Section
 
